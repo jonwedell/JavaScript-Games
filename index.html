@@ -1,0 +1,445 @@
+<HTML>
+<HEAD>
+<TITLE>Learn to Canvas</TITLE>
+</HEAD>
+
+<BODY>
+<CANVAS id="myCanvas" width="750" height="750">Your browser doesn't seem to support the canvas element. What year are you living in, 2003?</CANVAS>
+
+
+<SCRIPT TYPE="text/javascript">
+
+/* TODO:
+
+1) Round using 
+	rounded = (0.5 + somenum) << 0;
+	
+2) Use multiple layered canvases?
+	<canvas id="bg" width="640" height="480" style="position: absolute; z-index: 0"></canvas>
+	<canvas id="fg" width="640" height="480" style="position: absolute; z-index: 1"></canvas>
+3) Detect when either end of the ship hits an asteroid
+
+
+*/
+
+
+// Figure out what is going on
+var canvas = document.getElementById('myCanvas');
+canvas.height = window.innerHeight-20;
+canvas.width = window.innerWidth-20;
+var context = canvas.getContext('2d');
+context.font = "bold 25px Arial";
+
+// Set up the game variables
+var game = {};
+game.lives = 2;
+game.level = 1;
+game.score = 0;
+game.invincible = 160;
+game.childroids = 3;
+game.max_bullets = 7;
+game.cur_bullet = 0;
+game.valid = true;
+game.active = true;
+game.next_asteroid = 0;
+game.num_bullets = 0;
+game.num_asteroids = 0;
+game.box_height = canvas.height/2-130/2;
+game.box_width = canvas.width/2-250/2;
+game.rel_size = (canvas.width * canvas.height) / 1680000;
+
+// Set up the images
+var asteroid_img = {};
+asteroid_img.small = new Image(); asteroid_img.medium = new Image(); asteroid_img.large = new Image();
+asteroid_img.small.src = 'a1.png';
+asteroid_img.small.width = 137/2/(1/game.rel_size);
+asteroid_img.small.height = 166/2/(1/game.rel_size);
+asteroid_img.medium.src = 'a2.png';
+asteroid_img.medium.width = 202/2/(1/game.rel_size);
+asteroid_img.medium.height = 205/2/(1/game.rel_size);
+asteroid_img.large.src = 'a3.png';
+asteroid_img.large.width = 284/2/(1/game.rel_size);
+asteroid_img.large.height = 282/2/(1/game.rel_size);
+
+// Draw a bullet
+var b_canvas = document.createElement('canvas');
+b_canvas.width = b_canvas.height = game.rel_size*7;
+var b_context = b_canvas.getContext('2d');
+b_context.fillStyle = 'white';
+b_context.beginPath();
+b_context.arc(b_canvas.width/2, b_canvas.height/2, (game.rel_size*4<1) ? 1 : game.rel_size*4, 0 , 2 * Math.PI);
+b_context.fill();
+b_context.stroke();
+
+// Initialize the ship
+var ship = {};
+ship.x = canvas.width/2;
+ship.y = canvas.height/2;
+ship.x_vel = 0;
+ship.y_vel = 0;
+ship.angle = 3*Math.PI/2;
+
+// Keep track of the bullets and asteroids
+var bullets = {};
+var asteroids = {};
+
+// Keep track of which keys are pressed
+var keys = {};
+keys.up = false;
+keys.down = false;
+keys.left = false;
+keys.right = false;
+keys.fire = false;
+
+// Listen to keypresses to cycle through frames or pause game
+document.addEventListener('keydown', function(event) {
+    if (event.keyCode == 37) { keys.left = true;
+    } else if (event.keyCode == 39) { keys.right = true;
+	} else if (event.keyCode == 38){ keys.up = true;
+	} else if (event.keyCode == 40){ keys.down = true;
+	} else if (event.keyCode == 32) { keys.fire = true;
+	} else if (event.keyCode == 13) { game.active ? game.active = false : game.active = true;}
+}, true);
+
+// Listen to keypresses to cycle through frames or pause game
+document.addEventListener('keyup', function(event) {
+    if (event.keyCode == 37) { keys.left = false;
+    } else if (event.keyCode == 39) { keys.right = false;
+	} else if (event.keyCode == 38){ keys.up = false;
+	} else if (event.keyCode == 40){ keys.down = false;}
+}, true);
+
+// Create an asteroid
+function create_asteroid(roid,size,opts){
+	// If they passed asteroid parameters in the options, use them, otherwise use the defaults
+	'x' in opts ? roid.x = opts.x : roid.x = Math.random()*canvas.width;
+	'y' in opts ? roid.y = opts.y : roid.y = Math.random()*canvas.height;
+	'spin' in opts ? roid.spin = opts.spin : roid.spin = Math.random() * 1/32 * Math.PI - 1/64 * Math.PI;
+	'angle' in opts ? roid.angle = opts.angle : roid.angle = Math.random() * 2 * Math.PI;
+	'x_vel' in opts ? roid.x_vel = opts.x_vel : roid.x_vel = Math.random() * (2*game.level) - game.level;
+	'y_vel' in opts ? roid.y_vel = opts.y_vel : roid.y_vel = Math.random() * (2*game.level) - game.level;
+	'ref' in opts ? roid.ref = opts.ref : roid.ref = game.next_asteroid; game.next_asteroid++;
+	
+	// The size must always be supplied
+	roid.size = size;
+	roid.width = asteroid_img[roid.size].width;
+	roid.height = asteroid_img[roid.size].height;
+	if (roid != opts){ game.num_asteroids++;}
+}
+
+// Searches the galaxy for asteroids
+function hubble_space_telescope(){
+	for (var i=0;i<game.level;i++){
+		asteroids[i] = {};
+		create_asteroid(asteroids[i],'large',{});
+	}
+}
+
+// Oopsies
+function crash(){
+	game.lives--;
+	ship.x = canvas.width/2;
+	ship.y = canvas.height/2;
+	ship.x_vel = 0;
+	ship.y_vel = 0;
+	game.invincible = 220;
+	game.score -= 200;
+	
+	// If they ran out of lives, game over
+	if (game.lives < 0){
+		game.valid = false;
+		game.active = false;
+		game.lives = 0;
+	}
+}
+
+// Detect collisions
+function collision_detect(x1,y1,x2,y2,d2){
+	r2 = d2/2*.85;
+	if ((x1 < x2 + r2) && (x1 > x2 - r2) && (y1 < y2 + r2) && (y1 > y2 - r2)){
+		return true;
+	} else {
+		return false;
+	}
+}
+
+// Deal with asteroids being hit
+function asteroid_hit(roid){
+	if (roid.size == 'large'){
+		
+		game.score += 10;
+		
+		// Turn the current asteroid into a smaller version of itself
+		create_asteroid(roid,'medium',roid);
+		
+		// Add the number of children we are expecting
+		for (var i=1;i<game.childroids;i++){
+			asteroids[game.next_asteroid] = {};
+			asteroids[game.next_asteroid].ref = game.next_asteroid;
+			create_asteroid(asteroids[game.next_asteroid],'medium',{"x":roid.x, "y":roid.y});
+			game.next_asteroid++;
+		}
+		
+	} else if (roid.size == 'medium'){
+		
+		game.score += 20;
+		
+		// Turn the current asteroid into a smaller version of itself
+		create_asteroid(roid,'small',roid);
+		
+		// Add the number of children we are expecting
+		for (var i=1;i<game.childroids;i++){
+			asteroids[game.next_asteroid] = {};
+			asteroids[game.next_asteroid].ref = game.next_asteroid;
+			create_asteroid(asteroids[game.next_asteroid],'small',{"x":roid.x, "y":roid.y});
+			game.next_asteroid++;
+		}
+	} else if (roid.size == 'small'){
+		game.score += 30;
+		
+		delete asteroids[roid.ref];
+		game.num_asteroids--;
+	}
+}
+
+// Add a bullet to the bullet list
+function create_bullet(){
+	if (game.num_bullets < game.max_bullets){
+		bullets[game.cur_bullet] = {};
+		bullets[game.cur_bullet].x = ship.x2;
+		bullets[game.cur_bullet].y = ship.y2;
+		bullets[game.cur_bullet].x_vel = ship.x_vel + Math.cos(ship.angle)*7;
+		bullets[game.cur_bullet].y_vel = ship.y_vel + Math.sin(ship.angle)*7;
+		bullets[game.cur_bullet].life_left = 200;
+		game.cur_bullet++;
+		game.num_bullets++;
+	}
+}
+
+// Do one tick of action
+function update_field(){
+	
+	// Don't update if the game is paused or over
+	if (!(game.active)){ return; }
+	if (!(game.valid)){ game.active = false; return; }
+	
+	// If there are no asteroids left, they have won the level
+	if (game.num_asteroids <= 0){
+		game.next_asteroid = 0;
+		game.num_asteroids = 0;
+		game.invincible = 160;
+		game.score += game.level * 100;
+		game.level++;
+		game.lives++;
+		game.max_bullets += 2;
+		game.active = false;
+		hubble_space_telescope();
+	}
+	
+	// Update ship based on user action
+	if (keys.left) { ship.angle -= Math.PI/64; }
+    if (keys.right) { ship.angle += Math.PI/64; }
+	if (keys.up){
+		ship.x_vel += Math.cos(ship.angle)/10;
+		ship.y_vel += Math.sin(ship.angle)/10;
+	}
+	if (keys.down){
+		ship.x_vel -= Math.cos(ship.angle)/20;
+		ship.y_vel -= Math.sin(ship.angle)/20;
+	}
+	
+	// Update ship position
+	ship.x += ship.x_vel;
+	ship.y += ship.y_vel;
+	if (ship.x > canvas.width){ ship.x -= canvas.width;}
+	if (ship.y > canvas.height){ ship.y -= canvas.height;}
+	if (ship.x < 0){ ship.x += canvas.width;}
+	if (ship.y < 0){ ship.y += canvas.height;}
+	
+	// Update secondary ship information
+	ship.x1 = ship.x+Math.cos(ship.angle-Math.PI/2)*game.rel_size*10;
+	ship.y1 = ship.y+Math.sin(ship.angle-Math.PI/2)*game.rel_size*10;
+	ship.x2 = ship.x+Math.cos(ship.angle)*30*game.rel_size;
+	ship.y2 = ship.y+Math.sin(ship.angle)*30*game.rel_size;
+	ship.x3 = ship.x+Math.cos(ship.angle+Math.PI/2)*game.rel_size*10;
+	ship.y3 = ship.y+Math.sin(ship.angle+Math.PI/2)*game.rel_size*10;
+	
+	// Fire a shot
+	if (keys.fire){
+		keys.fire = false;
+		create_bullet();
+	}
+	
+	// Update the bullets
+	for(var key in bullets){
+        
+        // See if a bullet hit an asteroid
+		for(var akey in asteroids){
+			if(asteroids.hasOwnProperty(akey)){
+				if(bullets.hasOwnProperty(key)){
+					if (collision_detect(bullets[key].x,bullets[key].y,asteroids[akey].x,asteroids[akey].y,asteroids[akey].width)){
+						delete bullets[key];
+						game.num_bullets--;
+						asteroid_hit(asteroids[akey]);
+					}
+					
+					// The ship hit an asteroid, update ship coordinates and lives
+					//if (collision_detect(ship.x,ship.y,bullets[key].x,bullets[key].y,8)){
+					//	crash();
+					//	delete bullets[key];
+					//	game.num_bullets--;
+					//}
+				}
+			}
+		}
+			
+		// Move the bullets, make sure they should still be alive
+		if(bullets.hasOwnProperty(key)){
+			bullets[key].x += bullets[key].x_vel;
+			bullets[key].y += bullets[key].y_vel;
+			if (bullets[key].x > canvas.width){ bullets[key].x -= canvas.width;}
+			if (bullets[key].y > canvas.height){ bullets[key].y -= canvas.height;}
+			if (bullets[key].x < 0){ bullets[key].x += canvas.width;}
+			if (bullets[key].y < 0){ bullets[key].y += canvas.height;}
+			bullets[key].life_left--;
+			
+			// The bullet "timed out"
+			if (bullets[key].life_left < 0){
+				delete bullets[key];
+				game.num_bullets--;
+				
+				// If they shot a bullet and didn't hit anything they lose 5 points
+				game.score -= 5;
+			}
+        }
+    }
+    
+    // Update the asteroids
+	for(var key in asteroids){
+        if(asteroids.hasOwnProperty(key)){
+			
+			// If we aren't invincible and none of the three ship points have hit the asteroid we have crashed
+			if ((game.invincible < 0) && ((collision_detect(ship.x1,ship.y1,asteroids[key].x,asteroids[key].y,(asteroids[key].width > asteroids[key].height) ? asteroids[key].width : asteroids[key].height)) ||
+				(collision_detect(ship.x2,ship.y2,asteroids[key].x,asteroids[key].y,asteroids[key].width)) ||
+				(collision_detect(ship.x3,ship.y3,asteroids[key].x,asteroids[key].y,asteroids[key].width)))){
+				
+				// The ship hit an asteroid, update ship coordinates and lives
+				crash();
+			}
+			
+			// Move the asteroid based on it's velocity
+			asteroids[key].x += asteroids[key].x_vel;
+			asteroids[key].y += asteroids[key].y_vel;
+			if (asteroids[key].x > canvas.width){ asteroids[key].x -= canvas.width;}
+			if (asteroids[key].y > canvas.height){ asteroids[key].y -= canvas.height;}
+			if (asteroids[key].x < 0){ asteroids[key].x += canvas.width;}
+			if (asteroids[key].y < 0){ asteroids[key].y += canvas.height;}
+			asteroids[key].angle += asteroids[key].spin;
+        }
+    }
+    
+    // A game frame passed, move towards vincibility
+    game.invincible--;
+}
+
+// Update the canvas.
+function animate() {
+	
+	// This tells the browser to give us 50 or 60 FPS if possible,
+	//  and synchronizes the drawing of the frames with other browser
+	//   activities and with the screen refresh rate.
+	reqAnimFrame = window.requestAnimationFrame ||
+					window.mozRequestAnimationFrame    ||
+					window.webkitRequestAnimationFrame ||
+					window.msRequestAnimationFrame     ||
+					window.oRequestAnimationFrame || 
+					function(callback) {
+						window.setTimeout(callback, 1000 / 60);
+					};
+    reqAnimFrame(animate);
+	
+	// Update the positions
+	update_field();
+	
+	// Clear the canvas
+	//context.clearRect(0, 0, canvas.width, canvas.height);
+	context.fillStyle = 'black';
+	context.fillRect(0, 0, canvas.width, canvas.height);
+
+	// Draw the ship
+	context.beginPath();
+	context.lineWidth = 3;
+	context.strokeStyle = 'white';
+	context.lineJoin = 'round';
+	context.moveTo(ship.x1, ship.y1);
+	context.lineTo(ship.x2, ship.y2);
+	context.lineTo(ship.x3, ship.y3);
+	context.lineTo(ship.x1, ship.y1);
+	context.closePath();
+	context.stroke();
+	
+	// Draw any bullets
+	context.fillStyle = 'white';
+	for(var key in bullets){
+        if(bullets.hasOwnProperty(key)){
+			context.beginPath();
+			context.arc(bullets[key].x, bullets[key].y, 3, 0 , 2 * Math.PI);
+			context.fill();
+			context.stroke();
+			//context.drawImage(b_canvas, bullets[key].x-b_canvas.width/2, bullets[key].y-b_canvas.height/2);
+        }
+    }
+    
+    // Draw any asteroids
+	for(var key in asteroids){
+        if(asteroids.hasOwnProperty(key)){
+			context.save();
+			context.translate( asteroids[key].x, asteroids[key].y );
+			context.rotate( asteroids[key].angle );
+			context.drawImage(asteroid_img[asteroids[key].size], -asteroids[key].width/2, -asteroids[key].height/2, asteroids[key].width, asteroids[key].height);
+			context.restore();
+        }
+    }
+
+	// Draw the status information if paused
+	if (!(game.active)){
+		// Draw the paused box
+		context.fillStyle = 'red';
+		context.strokeStyle = 'blue';
+		context.lineWidth = 7;
+		context.fillRect(game.box_width-10,game.box_height-30,250,130);
+		context.strokeRect(game.box_width-10,game.box_height-30,250,130);
+		
+		// Draw the text in the paused box
+		context.fillStyle = 'black';
+		context.fillText((game.valid) ? "Paused..." : "Game over!", game.box_width, game.box_height);
+		context.fillText("Current level: " + game.level, game.box_width, game.box_height+30);
+		context.fillText("Lives remaining: " + game.lives, game.box_width, game.box_height+60);
+		context.fillText("Score: " + game.score, game.box_width, game.box_height+90);
+		
+		context.fillStyle = 'white';
+	}
+	
+	// Display the "Invincible mode" message
+	if (game.invincible > 0){
+		context.fillText("Invincible: " + game.invincible, 10, 25);
+		context.fillText("Lives left: " + game.lives, 10, 50);
+	}
+	
+	context.fillText("Score: " + game.score, 10, canvas.height-25);
+};
+
+// Do the intial asteroid fill
+hubble_space_telescope();
+
+// Update the canvas whenever the browser thinks it would be nice
+animate();
+
+// But make sure to update the action 60 times a second
+//var t=setInterval(update_field,1000/60);
+
+// Pause the game if they left the tab
+window.onblur = function() { game.active = false;};
+</SCRIPT>
+</BODY>
+</HTML>
