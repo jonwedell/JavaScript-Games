@@ -1,0 +1,223 @@
+<HTML>
+<HEAD>
+<TITLE>Pong</TITLE>
+</HEAD>
+
+<BODY>	
+<CANVAS id="imgCanvas" width="700" height="700"></CANVAS>
+<SCRIPT TYPE="text/javascript">
+// Figure out what is going on
+var canvas = document.getElementById('imgCanvas');
+var context = canvas.getContext('2d');
+canvas.height = window.innerHeight-25;
+canvas.width = window.innerWidth-25;
+
+// Initialize variables
+var keys = {};
+keys.up1 = false;
+keys.down1 = false;
+
+var players = {};
+players[1] = {};
+players[2] = {};
+players[1].type = 'human';
+players[2].type = 'cpu';
+players[1].lives = 3;
+players[2].lives = 3;
+players[1].ypos = .5;
+players[2].ypos = .5;
+players[1].size = .1;
+players[2].size = .1;
+
+var balls = {};
+
+// Set up the game variables
+var game = {};
+game.paddlespeed = 5;
+game.level = 1;
+game.curball = 0;
+game.paused = true;
+game.over = false;
+
+// Listen to keypresses 
+document.addEventListener('keydown', function(event) {
+	if (event.keyCode == 38){
+		keys.up1 = true;
+	} else if (event.keyCode == 40){
+		keys.down1 = true;
+	} else if (event.keyCode == 13){
+		if (game.paused){
+			game.paused = false;
+			canvas.webkitRequestFullScreen();
+		} else {
+			game.paused = true;
+			document.webkitCancelFullScreen();
+		}
+	}
+}, true);
+
+// Listen to key-releases
+document.addEventListener('keyup', function(event) {
+	if (event.keyCode == 38){ keys.up1 = false; } else if (event.keyCode == 40){ keys.down1 = false;}
+}, true);
+
+// Add a ball to the board
+function create_ball(){
+	balls[game.curball] = {};
+	balls[game.curball].speed = Math.random();
+	balls[game.curball].x = Math.random() * .5 + .25;
+	balls[game.curball].y = Math.random() * .5 + .25;
+	
+	// Make sure the ball isn't launched at an obscenely low angle
+	balls[game.curball].angle = Math.random() * 2* Math.PI;
+	while (((balls[game.curball].angle > 11*Math.PI/8) && (balls[game.curball].angle < 13*Math.PI/8)) || ((balls[game.curball].angle > 3*Math.PI/8) && (balls[game.curball].angle < 5*Math.PI/8))){
+		balls[game.curball].angle = Math.random() * 2* Math.PI;
+	}
+	balls[game.curball].speed = 1;
+	game.curball++;
+}
+
+// This will do the things
+function updateFrame(){
+	
+	if ((game.paused) || (game.over)){
+		return;
+	}
+	
+	// Update the size of the frame
+	if (canvas.height != window.innerHeight-25){ canvas.height = window.innerHeight-25;}
+	if (canvas.width != window.innerWidth-25){ canvas.width = window.innerWidth-25;}
+	
+	// Move paddles in response to user input
+	if (keys.up1){ players[1].ypos -= .01; }
+	if (keys.down1){ players[1].ypos += .01; }
+	
+	// Make sure the paddle doesn't go off screen
+	for(var player in players){
+        if(players.hasOwnProperty(player)){
+			if (players[player].ypos-players[player].size < 0){players[player].ypos = 0+players[player].size;}
+			if (players[player].ypos > 1){players[player].ypos = 1;}
+		}
+	}
+	
+	// Update the position of the balls
+	for(var key in balls){
+        if(balls.hasOwnProperty(key)){
+			
+			// Move the ball
+			balls[key].x += Math.cos(balls[key].angle)/100/2 * balls[key].speed;
+			balls[key].y += Math.sin(balls[key].angle)/100/2 * balls[key].speed;
+			
+			// Move the computer paddle
+			if (players[2].type == 'cpu'){
+				if (players[2].ypos - players[2].size/2 > balls[key].y){ players[2].ypos -= .01;}
+				if (players[2].ypos - players[2].size/2 < balls[key].y){ players[2].ypos += .01;}
+			}
+			
+			// Reflect the ball off the sides
+			if ((balls[key].y > .99) || (balls[key].y < .01)){ balls[key].angle = 2*Math.PI - balls[key].angle; }
+			
+			// See if the player manages to hit the ball
+			if (balls[key].x < .01){
+				if ((players[1].ypos-players[1].size <= balls[key].y) && (players[1].ypos >= balls[key].y)){
+					
+					//balls[key].angle = Math.PI - balls[key].angle;
+					balls[key].angle = -((players[1].ypos-players[1].size/2 - balls[key].y)*10*Math.PI*.8);
+					balls[key].speed = balls[key].speed + .1;
+				} else {
+					delete balls[key];
+					// Check for losers
+                    if (players[1].lives == 0){
+                        game.winner = 2;
+                        game.over = true;
+                        return;
+                    }
+                    players[1].lives--;
+					create_ball();
+					return;
+				}
+			}
+			
+			// See if the computer manages to hit the ball
+			if (balls[key].x > .99){
+				if ((players[2].ypos-players[2].size <= balls[key].y) && (players[2].ypos >= balls[key].y)){
+					//balls[key].angle = Math.PI - balls[key].angle;
+					
+					balls[key].angle = -((players[2].ypos-players[2].size/2 - balls[key].y)*10*Math.PI*.8) + Math.PI;
+					balls[key].speed = balls[key].speed + .1;
+				} else {
+					delete balls[key];
+					if (players[2].lives == 0){
+                        game.winner = 1;
+                        game.over = true;
+                        return;
+                    }
+                    players[2].lives--;
+					create_ball();
+					return;
+				}
+			}
+        }
+    }
+}
+
+// Update the canvas.
+function animate() {
+	
+	// This tells the browser to give us 50 or 60 FPS if possible,
+	//  and synchronizes the drawing of the frames with other browser
+	//   activities and with the screen refresh rate.
+	reqAnimFrame = window.requestAnimationFrame ||
+					window.mozRequestAnimationFrame    ||
+					window.webkitRequestAnimationFrame ||
+					window.msRequestAnimationFrame     ||
+					window.oRequestAnimationFrame || 
+					function(callback) {
+						window.setTimeout(callback, 1000 / 60);
+					};
+    reqAnimFrame(animate);
+	
+	updateFrame();
+	
+	// Clear the canvas
+	context.clearRect(0, 0, canvas.width, canvas.height);
+	
+	// Draw the balls
+	for(var key in balls){
+        if(balls.hasOwnProperty(key)){
+			context.beginPath();
+			context.arc(balls[key].x*canvas.width, balls[key].y*canvas.height, 5*.001*canvas.height, 0 , 2 * Math.PI);
+			context.fill();
+			context.stroke();
+        }
+    }
+    
+    // Draw the paddles
+	context.fillRect(0, (players[1].ypos-players[1].size)*canvas.height, .01*canvas.width, players[1].size*canvas.height);
+	context.fillRect(canvas.width*.99, (players[2].ypos-players[2].size)*canvas.height, .01*canvas.width, players[2].size*canvas.height);
+	
+	// Draw the score
+	context.font = "bold 25px Arial";
+	context.textBaseline = "top";
+	context.fillText(players[1].lives + " : " + players[2].lives, canvas.width/2, 0);
+	
+	// If the game is over, draw the scores
+	if (game.over){
+	    if (game.winner == 1){
+	        context.fillText("You win!", canvas.width/2,canvas.height/2);
+	    } else {
+	        context.fillText("You lose!", canvas.width/2,canvas.height/2);
+	    }
+	}
+};
+
+create_ball();
+context.fillStyle = 'black';
+context.strokeStyle = 'black';
+animate();
+
+// Move the objects around
+//var t = setInterval(updateFrame,1000/60);
+</SCRIPT>
+</BODY>
+</HTML>
